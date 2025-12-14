@@ -2,6 +2,10 @@ import os
 import re
 import difflib
 from collections import defaultdict
+import pandas as pd
+from openpyxl import Workbook
+from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+import datetime
 
 
 def normalize_triplet(triplet_str):
@@ -355,9 +359,6 @@ def process_file_pair(gold_file_path, pred_file_path):
         gold_triplets = parse_triplets(gold_content)
         pred_triplets = parse_triplets(pred_content)
 
-        print(f"人工标注三元组数量: {len(gold_triplets)}")
-        print(f"模型预测三元组数量: {len(pred_triplets)}")
-
         # 计算三元组级别的指标
         triplet_metrics = calculate_metrics(gold_triplets, pred_triplets)
 
@@ -365,74 +366,20 @@ def process_file_pair(gold_file_path, pred_file_path):
         gold_entities, gold_relations = extract_entities_and_relations(gold_triplets, deduplicate_entities_flag=True)
         pred_entities, pred_relations = extract_entities_and_relations(pred_triplets, deduplicate_entities_flag=True)
 
-        print(f"去重后标准实体数量: {len(gold_entities)}")
-        print(f"去重后预测实体数量: {len(pred_entities)}")
-        print(f"标准关系数量: {len(gold_relations)}")
-        print(f"预测关系数量: {len(pred_relations)}")
-
         # 计算实体指标
         entity_metrics = calculate_entity_metrics(gold_entities, pred_entities)
 
         # 计算关系指标
         relation_metrics = calculate_relation_metrics(gold_relations, pred_relations)
 
-        # 打印结果
-        print("\n三元组识别结果:")
-        print(f"  TP: {triplet_metrics['tp']}, FP: {triplet_metrics['fp']}, FN: {triplet_metrics['fn']}")
-        print(
-            f"  精确度: {triplet_metrics['precision']:.4f}, 召回率: {triplet_metrics['recall']:.4f}, F1分数: {triplet_metrics['f1']:.4f}")
-
-        print("\n实体识别结果:")
-        print(f"  TP: {entity_metrics['tp']}, FP: {entity_metrics['fp']}, FN: {entity_metrics['fn']}")
-        print(
-            f"  精确度: {entity_metrics['precision']:.4f}, 召回率: {entity_metrics['recall']:.4f}, F1分数: {entity_metrics['f1']:.4f}")
-
-        print("\n关系识别结果:")
-        print(f"  TP: {relation_metrics['tp']}, FP: {relation_metrics['fp']}, FN: {relation_metrics['fn']}")
-        print(
-            f"  精确度: {relation_metrics['precision']:.4f}, 召回率: {relation_metrics['recall']:.4f}, F1分数: {relation_metrics['f1']:.4f}")
-
-        # 打印每种实体类型的指标
-        print("\n每种实体类型的指标:")
-        for entity_type, stats in entity_metrics['type_stats'].items():
-            print(f"  {entity_type}: TP={stats['tp']}, FP={stats['fp']}, FN={stats['fn']}, "
-                  f"精确度={stats['precision']:.4f}, 召回率={stats['recall']:.4f}, F1={stats['f1']:.4f}")
-
-        # 打印每种关系类型的指标
-        print("\n每种关系类型的指标:")
-        for relation_type, stats in relation_metrics['type_stats'].items():
-            print(f"  {relation_type}: TP={stats['tp']}, FP={stats['fp']}, FN={stats['fn']}, "
-                  f"精确度={stats['precision']:.4f}, 召回率={stats['recall']:.4f}, F1={stats['f1']:.4f}")
-
-        # 打印未匹配的三元组
-        print("\n未匹配的三元组 (FN - 标准中有但预测中没有):")
-        for triplet in triplet_metrics['unmatched_gold']:
-            print(f"  ({triplet[0]}, {triplet[1]}, {triplet[2]})")
-
-        print("\n未匹配的三元组 (FP - 预测中有但标准中没有):")
-        for triplet in triplet_metrics['unmatched_pred']:
-            print(f"  ({triplet[0]}, {triplet[1]}, {triplet[2]})")
-
-        # 打印未匹配的实体
-        print("\n未匹配的实体 (FN - 标准中有但预测中没有):")
-        for entity in entity_metrics['unmatched_gold']:
-            print(f"  {entity}")
-
-        print("\n未匹配的实体 (FP - 预测中有但标准中没有):")
-        for entity in entity_metrics['unmatched_pred']:
-            print(f"  {entity}")
-
-        # 打印未匹配的关系
-        print("\n未匹配的关系 (FN - 标准中有但预测中没有):")
-        for relation in relation_metrics['unmatched_gold']:
-            print(f"  {relation}")
-
-        print("\n未匹配的关系 (FP - 预测中有但标准中没有):")
-        for relation in relation_metrics['unmatched_pred']:
-            print(f"  {relation}")
-
         # 返回所有指标
         return {
+            'gold_triplets': gold_triplets,
+            'pred_triplets': pred_triplets,
+            'gold_entities': gold_entities,
+            'pred_entities': pred_entities,
+            'gold_relations': gold_relations,
+            'pred_relations': pred_relations,
             'triplet': triplet_metrics,
             'entity': entity_metrics,
             'relation': relation_metrics
@@ -443,7 +390,166 @@ def process_file_pair(gold_file_path, pred_file_path):
         return None
 
 
-def process_folders(gold_folder, pred_folder):
+def save_results_to_excel(results, output_file="评估结果.xlsx"):
+    """
+    将评估结果保存到Excel文件
+    """
+    try:
+        with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
+            # 1. 创建汇总工作表
+            summary_data = []
+            for file_name, file_results in results['file_results'].items():
+                summary_data.append({
+                    '文件名': file_name,
+                    '标准三元组数': len(file_results['gold_triplets']),
+                    '预测三元组数': len(file_results['pred_triplets']),
+                    '三元组TP': file_results['triplet']['tp'],
+                    '三元组FP': file_results['triplet']['fp'],
+                    '三元组FN': file_results['triplet']['fn'],
+                    '三元组精确度': file_results['triplet']['precision'],
+                    '三元组召回率': file_results['triplet']['recall'],
+                    '三元组F1': file_results['triplet']['f1'],
+                    '实体TP': file_results['entity']['tp'],
+                    '实体FP': file_results['entity']['fp'],
+                    '实体FN': file_results['entity']['fn'],
+                    '实体精确度': file_results['entity']['precision'],
+                    '实体召回率': file_results['entity']['recall'],
+                    '实体F1': file_results['entity']['f1'],
+                    '关系TP': file_results['relation']['tp'],
+                    '关系FP': file_results['relation']['fp'],
+                    '关系FN': file_results['relation']['fn'],
+                    '关系精确度': file_results['relation']['precision'],
+                    '关系召回率': file_results['relation']['recall'],
+                    '关系F1': file_results['relation']['f1']
+                })
+
+            summary_df = pd.DataFrame(summary_data)
+            summary_df.to_excel(writer, sheet_name='文件汇总', index=False)
+
+            # 2. 创建总体指标工作表
+            overall_data = []
+            # 三元组总体指标
+            overall_data.append({
+                '指标类型': '三元组',
+                'TP': results['overall_triplet']['tp'],
+                'FP': results['overall_triplet']['fp'],
+                'FN': results['overall_triplet']['fn'],
+                '精确度': results['overall_triplet']['precision'],
+                '召回率': results['overall_triplet']['recall'],
+                'F1分数': results['overall_triplet']['f1']
+            })
+            # 实体总体指标
+            overall_data.append({
+                '指标类型': '实体',
+                'TP': results['overall_entity']['tp'],
+                'FP': results['overall_entity']['fp'],
+                'FN': results['overall_entity']['fn'],
+                '精确度': results['overall_entity']['precision'],
+                '召回率': results['overall_entity']['recall'],
+                'F1分数': results['overall_entity']['f1']
+            })
+            # 关系总体指标
+            overall_data.append({
+                '指标类型': '关系',
+                'TP': results['overall_relation']['tp'],
+                'FP': results['overall_relation']['fp'],
+                'FN': results['overall_relation']['fn'],
+                '精确度': results['overall_relation']['precision'],
+                '召回率': results['overall_relation']['recall'],
+                'F1分数': results['overall_relation']['f1']
+            })
+
+            overall_df = pd.DataFrame(overall_data)
+            overall_df.to_excel(writer, sheet_name='总体指标', index=False)
+
+            # 3. 创建实体类型指标工作表
+            entity_type_data = []
+            for entity_type, stats in results['overall_entity_type_stats'].items():
+                entity_type_data.append({
+                    '实体类型': entity_type,
+                    'TP': stats['tp'],
+                    'FP': stats['fp'],
+                    'FN': stats['fn'],
+                    '精确度': stats['precision'],
+                    '召回率': stats['recall'],
+                    'F1分数': stats['f1']
+                })
+
+            entity_type_df = pd.DataFrame(entity_type_data)
+            entity_type_df.to_excel(writer, sheet_name='实体类型指标', index=False)
+
+            # 4. 创建关系类型指标工作表
+            relation_type_data = []
+            for relation_type, stats in results['overall_relation_type_stats'].items():
+                relation_type_data.append({
+                    '关系类型': relation_type,
+                    'TP': stats['tp'],
+                    'FP': stats['fp'],
+                    'FN': stats['fn'],
+                    '精确度': stats['precision'],
+                    '召回率': stats['recall'],
+                    'F1分数': stats['f1']
+                })
+
+            relation_type_df = pd.DataFrame(relation_type_data)
+            relation_type_df.to_excel(writer, sheet_name='关系类型指标', index=False)
+
+            # 5. 创建中成药特别分析工作表
+            cm_analysis_data = []
+            # 总体中成药指标
+            if "中成药" in results['overall_entity_type_stats']:
+                cm_stats = results['overall_entity_type_stats']["中成药"]
+                cm_analysis_data.append({
+                    '指标类型': '总体指标',
+                    'TP': cm_stats['tp'],
+                    'FP': cm_stats['fp'],
+                    'FN': cm_stats['fn'],
+                    '精确度': cm_stats['precision'],
+                    '召回率': cm_stats['recall'],
+                    'F1分数': cm_stats['f1']
+                })
+
+            cm_analysis_df = pd.DataFrame(cm_analysis_data)
+            cm_analysis_df.to_excel(writer, sheet_name='中成药分析', index=False)
+
+        print(f"\n评估结果已保存到: {output_file}")
+
+        # 设置Excel格式
+        wb = writer.book
+        # 设置总体指标的格式
+        for sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            # 设置列宽
+            for column in ws.columns:
+                max_length = 0
+                column_letter = column[0].column_letter
+                for cell in column:
+                    try:
+                        if len(str(cell.value)) > max_length:
+                            max_length = len(str(cell.value))
+                    except:
+                        pass
+                adjusted_width = min(max_length + 2, 50)
+                ws.column_dimensions[column_letter].width = adjusted_width
+
+            # 设置标题行样式
+            header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+            header_font = Font(color="FFFFFF", bold=True)
+            header_alignment = Alignment(horizontal="center", vertical="center")
+
+            for cell in ws[1]:
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = header_alignment
+
+        # 保存文件
+        wb.save(output_file)
+
+    except Exception as e:
+        print(f"保存Excel文件时出错: {e}")
+
+
+def process_folders(gold_folder, pred_folder, save_excel=True, output_file=None):
     """
     处理两个文件夹中的所有txt文件
     """
@@ -456,7 +562,7 @@ def process_folders(gold_folder, pred_folder):
 
     if not common_files:
         print("没有找到名称相同的txt文件进行匹配")
-        return
+        return None
 
     # 初始化总体统计
     overall_triplet_metrics = {'tp': 0, 'fp': 0, 'fn': 0}
@@ -471,6 +577,9 @@ def process_folders(gold_folder, pred_folder):
     overall_cm_fn_entities = []  # 中成药FN实体（标准中有但预测中没有）
     overall_cm_fp_entities = []  # 中成药FP实体（预测中有但标准中没有）
 
+    # 存储每个文件的详细结果
+    file_results = {}
+
     # 处理每个文件
     for file_name in sorted(common_files):
         print("\n" + "=" * 60)
@@ -484,6 +593,72 @@ def process_folders(gold_folder, pred_folder):
         metrics = process_file_pair(gold_file_path, pred_file_path)
 
         if metrics:
+            # 打印结果
+            print(f"人工标注三元组数量: {len(metrics['gold_triplets'])}")
+            print(f"模型预测三元组数量: {len(metrics['pred_triplets'])}")
+            print(f"去重后标准实体数量: {len(metrics['gold_entities'])}")
+            print(f"去重后预测实体数量: {len(metrics['pred_entities'])}")
+            print(f"标准关系数量: {len(metrics['gold_relations'])}")
+            print(f"预测关系数量: {len(metrics['pred_relations'])}")
+
+            print("\n三元组识别结果:")
+            print(f"  TP: {metrics['triplet']['tp']}, FP: {metrics['triplet']['fp']}, FN: {metrics['triplet']['fn']}")
+            print(
+                f"  精确度: {metrics['triplet']['precision']:.4f}, 召回率: {metrics['triplet']['recall']:.4f}, F1分数: {metrics['triplet']['f1']:.4f}")
+
+            print("\n实体识别结果:")
+            print(f"  TP: {metrics['entity']['tp']}, FP: {metrics['entity']['fp']}, FN: {metrics['entity']['fn']}")
+            print(
+                f"  精确度: {metrics['entity']['precision']:.4f}, 召回率: {metrics['entity']['recall']:.4f}, F1分数: {metrics['entity']['f1']:.4f}")
+
+            print("\n关系识别结果:")
+            print(
+                f"  TP: {metrics['relation']['tp']}, FP: {metrics['relation']['fp']}, FN: {metrics['relation']['fn']}")
+            print(
+                f"  精确度: {metrics['relation']['precision']:.4f}, 召回率: {metrics['relation']['recall']:.4f}, F1分数: {metrics['relation']['f1']:.4f}")
+
+            # 打印每种实体类型的指标
+            print("\n每种实体类型的指标:")
+            for entity_type, stats in metrics['entity']['type_stats'].items():
+                print(f"  {entity_type}: TP={stats['tp']}, FP={stats['fp']}, FN={stats['fn']}, "
+                      f"精确度={stats['precision']:.4f}, 召回率={stats['recall']:.4f}, F1={stats['f1']:.4f}")
+
+            # 打印每种关系类型的指标
+            print("\n每种关系类型的指标:")
+            for relation_type, stats in metrics['relation']['type_stats'].items():
+                print(f"  {relation_type}: TP={stats['tp']}, FP={stats['fp']}, FN={stats['fn']}, "
+                      f"精确度={stats['precision']:.4f}, 召回率={stats['recall']:.4f}, F1={stats['f1']:.4f}")
+
+            # 打印未匹配的三元组
+            print("\n未匹配的三元组 (FN - 标准中有但预测中没有):")
+            for triplet in metrics['triplet']['unmatched_gold']:
+                print(f"  ({triplet[0]}, {triplet[1]}, {triplet[2]})")
+
+            print("\n未匹配的三元组 (FP - 预测中有但标准中没有):")
+            for triplet in metrics['triplet']['unmatched_pred']:
+                print(f"  ({triplet[0]}, {triplet[1]}, {triplet[2]})")
+
+            # 打印未匹配的实体
+            print("\n未匹配的实体 (FN - 标准中有但预测中没有):")
+            for entity in metrics['entity']['unmatched_gold']:
+                print(f"  {entity}")
+
+            print("\n未匹配的实体 (FP - 预测中有但标准中没有):")
+            for entity in metrics['entity']['unmatched_pred']:
+                print(f"  {entity}")
+
+            # 打印未匹配的关系
+            print("\n未匹配的关系 (FN - 标准中有但预测中没有):")
+            for relation in metrics['relation']['unmatched_gold']:
+                print(f"  {relation}")
+
+            print("\n未匹配的关系 (FP - 预测中有但标准中没有):")
+            for relation in metrics['relation']['unmatched_pred']:
+                print(f"  {relation}")
+
+            # 存储文件结果
+            file_results[file_name] = metrics
+
             # 累加三元组统计信息（三元组不需要去重）
             overall_triplet_metrics['tp'] += metrics['triplet']['tp']
             overall_triplet_metrics['fp'] += metrics['triplet']['fp']
@@ -592,31 +767,56 @@ def process_folders(gold_folder, pred_folder):
         stats['recall'] = recall_type
         stats['f1'] = f1_type
 
+    # 准备总体指标字典
+    overall_triplet = {
+        'tp': overall_triplet_metrics['tp'],
+        'fp': overall_triplet_metrics['fp'],
+        'fn': overall_triplet_metrics['fn'],
+        'precision': triplet_precision,
+        'recall': triplet_recall,
+        'f1': triplet_f1
+    }
+
+    overall_entity = {
+        'tp': overall_entity_metrics['tp'],
+        'fp': overall_entity_metrics['fp'],
+        'fn': overall_entity_metrics['fn'],
+        'precision': entity_precision,
+        'recall': entity_recall,
+        'f1': entity_f1
+    }
+
+    overall_relation = {
+        'tp': overall_relation_metrics['tp'],
+        'fp': overall_relation_metrics['fp'],
+        'fn': overall_relation_metrics['fn'],
+        'precision': relation_precision,
+        'recall': relation_recall,
+        'f1': relation_f1
+    }
+
     # 打印总体结果
     print("\n" + "=" * 60)
     print("总体性能评估结果")
     print("=" * 60)
 
     print("\n三元组识别总体结果:")
-    print(
-        f"  TP: {overall_triplet_metrics['tp']}, FP: {overall_triplet_metrics['fp']}, FN: {overall_triplet_metrics['fn']}")
-    print(f"  精确度: {triplet_precision:.4f}")
-    print(f"  召回率: {triplet_recall:.4f}")
-    print(f"  F1分数: {triplet_f1:.4f}")
+    print(f"  TP: {overall_triplet['tp']}, FP: {overall_triplet['fp']}, FN: {overall_triplet['fn']}")
+    print(f"  精确度: {overall_triplet['precision']:.4f}")
+    print(f"  召回率: {overall_triplet['recall']:.4f}")
+    print(f"  F1分数: {overall_triplet['f1']:.4f}")
 
     print("\n实体识别总体结果:")
-    print(
-        f"  TP: {overall_entity_metrics['tp']}, FP: {overall_entity_metrics['fp']}, FN: {overall_entity_metrics['fn']}")
-    print(f"  精确度: {entity_precision:.4f}")
-    print(f"  召回率: {entity_recall:.4f}")
-    print(f"  F1分数: {entity_f1:.4f}")
+    print(f"  TP: {overall_entity['tp']}, FP: {overall_entity['fp']}, FN: {overall_entity['fn']}")
+    print(f"  精确度: {overall_entity['precision']:.4f}")
+    print(f"  召回率: {overall_entity['recall']:.4f}")
+    print(f"  F1分数: {overall_entity['f1']:.4f}")
 
     print("\n关系识别总体结果:")
-    print(
-        f"  TP: {overall_relation_metrics['tp']}, FP: {overall_relation_metrics['fp']}, FN: {overall_relation_metrics['fn']}")
-    print(f"  精确度: {relation_precision:.4f}")
-    print(f"  召回率: {relation_recall:.4f}")
-    print(f"  F1分数: {relation_f1:.4f}")
+    print(f"  TP: {overall_relation['tp']}, FP: {overall_relation['fp']}, FN: {overall_relation['fn']}")
+    print(f"  精确度: {overall_relation['precision']:.4f}")
+    print(f"  召回率: {overall_relation['recall']:.4f}")
+    print(f"  F1分数: {overall_relation['f1']:.4f}")
 
     # 打印每种实体类型的总体指标
     print("\n每种实体类型的总体指标:")
@@ -677,11 +877,31 @@ def process_folders(gold_folder, pred_folder):
     else:
         print("未找到中成药实体的统计信息")
 
+    # 整理所有结果
+    all_results = {
+        'file_results': file_results,
+        'overall_triplet': overall_triplet,
+        'overall_entity': overall_entity,
+        'overall_relation': overall_relation,
+        'overall_entity_type_stats': overall_entity_type_stats,
+        'overall_relation_type_stats': overall_relation_type_stats
+    }
+
+    # 保存到Excel文件
+    if save_excel:
+        if output_file is None:
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_file = f"评估结果_{timestamp}.xlsx"
+
+        save_results_to_excel(all_results, output_file)
+
+    return all_results
+
 
 if __name__ == "__main__":
     # 设置文件夹路径
-    gold_folder = "triple"  # 人工标注文件夹
-    pred_folder = "step2/doubao-2"  # 模型输出文件夹
+    gold_folder = "verification"  # 人工标注文件夹
+    pred_folder = "doubao"  # 模型输出文件夹
 
     # 确保文件夹存在
     if not os.path.exists(gold_folder):
@@ -696,5 +916,5 @@ if __name__ == "__main__":
     print("DeepSeek-R1模型性能评估")
     print("=" * 60)
 
-    # 处理文件夹
-    process_folders(gold_folder, pred_folder)
+    # 处理文件夹并保存结果
+    results = process_folders(gold_folder, pred_folder, save_excel=True)
