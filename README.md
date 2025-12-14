@@ -1,29 +1,29 @@
 本项目文件结构及说明如下：
 
-data 文件夹
+1、data 文件夹
 包含以下两个子文件夹：
 （1）test：测试数据集，用于评估三个大语言模型的性能。内含200个药物描述文本及1条中药材配伍禁忌数据。
 （2）verification：验证集，包含人工标注的三元组数据。同样包含200个药物描述文本及1条中药材配伍禁忌数据。
 
-prompt.txt
+2、prompt.txt
 调用大语言模型API进行命名实体识别所使用的提示词文件。
 
-config.py
+3、config.py
 配置文件，主要用于：
 
-设置各模型（豆包、DeepSeek、千问）的API Keys；
+（1）设置各模型（豆包、DeepSeek、千问）的API Keys；
 
-定义输入输出目录、提示词文件路径；
+（2）定义输入输出目录、提示词文件路径；
 
-配置API请求方式。
+（3）配置API请求方式。
 
-模型调用脚本
+4、模型调用脚本
 
-deepseek.py：调用 DeepSeek 大语言模型API的代码。
+（1）deepseek.py：调用 DeepSeek 大语言模型API的代码。
 
-doubao.py：调用豆包大语言模型API的代码。
+（2）doubao.py：调用豆包大语言模型API的代码。
 
-qianwen.py：调用千问大语言模型API的代码。
+（3）qianwen.py：调用千问大语言模型API的代码。
 
-evaluate.py
+5、evaluate.py
 基于精确度（Precision）、召回率（Recall）和 F1 分数（F1-score）三个经典评价指标，对三个大语言模型在命名实体识别与关系抽取任务上的性能进行评估的脚本。
